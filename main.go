@@ -5,7 +5,13 @@ import (
 	"os"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 )
+
+var style = lipgloss.NewStyle().
+	Bold(true).
+	Foreground(lipgloss.Color("#FAFAFA")).
+	Background(lipgloss.Color("#7D56F4"))
 
 type model struct {
 	choices  []string         // items on the to-do list
@@ -69,7 +75,7 @@ func (m model) View() string {
 			checked = "x"
 		}
 
-		s += fmt.Sprintf("%s [%s] %s\n", cursor, checked, choice)
+		s += fmt.Sprintf(style.Render("%s [%s] %s\n", cursor, checked, choice))
 	}
 
 	s += "\nPress q to quit.\n"
@@ -78,9 +84,11 @@ func (m model) View() string {
 }
 
 func main() {
+
 	p := tea.NewProgram(initialModel())
 	if _, err := p.Run(); err != nil {
-		fmt.Printf("Alas, there's been an error: %v", err)
+		fmt.Printf(style.Render("Alas, there's been an error: %v", err.Error()))
 		os.Exit(1)
 	}
+
 }
