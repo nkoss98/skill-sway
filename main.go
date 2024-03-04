@@ -1,94 +1,196 @@
 package main
 
 import (
-	"fmt"
 	"os"
 
+	"github.com/charmbracelet/bubbles/list"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 )
 
-var style = lipgloss.NewStyle().
-	Bold(true).
-	Foreground(lipgloss.Color("#FAFAFA")).
-	Background(lipgloss.Color("#7D56F4"))
+var (
+	columnStyle  = lipgloss.NewStyle().Padding(1, 2)
+	focusedStyle = lipgloss.NewStyle().Padding(1, 2).Border(lipgloss.RoundedBorder()).
+			BorderForeground(lipgloss.Color("62"))
+	helpStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
+)
 
-type model struct {
-	choices  []string         // items on the to-do list
-	cursor   int              // which to-do list item our cursor is pointing at
-	selected map[int]struct{} // which to-do items are selected
+type status int
+
+const (
+	todo status = iota
+	doing
+	done
+)
+
+type Task struct {
+	status      status
+	title       string
+	description string
 }
 
-func initialModel() model {
-	return model{
-		choices: []string{"Buy carrots", "Buy celery", "Buy kohlrabi"},
+func (t Task) FilterValue() string {
+	return t.title
+}
 
-		selected: make(map[int]struct{}),
+func (t Task) Title() string {
+	return t.title
+}
+
+func (t Task) Description() string {
+	return t.description
+}
+
+type Model struct {
+	focused status
+	lists   []list.Model
+	err     error
+	loaded  bool
+	quite   bool
+}
+
+func NewModel() *Model {
+	return &Model{}
+}
+
+func (m Model) Init() tea.Cmd {
+	return nil
+}
+func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := msg.(type) {
+	case tea.WindowSizeMsg:
+		if !m.loaded {
+			m.initLists(msg.Width, msg.Height)
+			m.loaded = true
+		}
+	case tea.KeyMsg:
+		switch msg.String() {
+		case "q":
+			m.quite = true
+			return m, tea.Quit
+		case "left", "h":
+			m.Next()
+		case "right", "l":
+			m.Prev()
+		case "enter":
+			return m, m.MoveToNext
+		}
+	}
+	var cmd tea.Cmd
+	m.lists[m.focused], cmd = m.lists[m.focused].Update(msg)
+	return m, cmd
+}
+
+func (m Model) View() string {
+	if m.quite {
+		return "bye!"
+	}
+	if m.loaded {
+		todoView := m.lists[todo].View()
+		inprogressView := m.lists[doing].View()
+		doneView := m.lists[done].View()
+
+		switch m.focused {
+		case todo:
+			return lipgloss.JoinHorizontal(lipgloss.Left,
+				columnStyle.Render(focusedStyle.Render(todoView)), columnStyle.Render(inprogressView), columnStyle.Render(doneView))
+		case doing:
+			return lipgloss.JoinHorizontal(lipgloss.Left,
+				columnStyle.Render(todoView), columnStyle.Render(focusedStyle.Render(inprogressView)), columnStyle.Render(doneView))
+		case done:
+			return lipgloss.JoinHorizontal(lipgloss.Left,
+				columnStyle.Render(todoView), columnStyle.Render(inprogressView), columnStyle.Render(focusedStyle.Render(doneView)))
+		}
+
+		return lipgloss.JoinHorizontal(lipgloss.Left, todoView, inprogressView, doneView)
+	}
+	return "loading..."
+
+}
+
+func (m *Model) Next() {
+	m.focused++
+	if m.focused > done {
+		m.focused = todo
 	}
 }
 
-func (m model) Init() tea.Cmd {
+func (m *Model) Prev() {
+	m.focused--
+	if m.focused < todo {
+		m.focused = done
+	}
+}
+func (m *Model) MoveToNext() tea.Msg {
+	selectedItem := m.lists[m.focused].SelectedItem()
+	selectedTask := selectedItem.(Task)
+	m.lists[selectedTask.status].RemoveItem(m.lists[m.focused].Index())
+	selectedTask.Next()
+	m.lists[selectedTask.status].InsertItem(len(m.lists[selectedTask.status].Items())-1, list.Item(selectedTask))
+
 	return nil
 }
 
-func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	switch msg := msg.(type) {
-	case tea.KeyMsg:
-		switch msg.String() {
-		case "ctrl+c", "q":
-			return m, tea.Quit
-		case "up", "k":
-			if m.cursor > 0 {
-				m.cursor--
-			}
-		case "down", "j":
-			if m.cursor < len(m.choices)-1 {
-				m.cursor++
-			}
-
-		case "enter", " ":
-			_, ok := m.selected[m.cursor]
-			if ok {
-				delete(m.selected, m.cursor)
-			} else {
-				m.selected[m.cursor] = struct{}{}
-			}
-		}
+func (t *Task) Next() {
+	t.status++
+	if t.status > done {
+		t.status = todo
 	}
-
-	return m, nil
 }
 
-func (m model) View() string {
-	s := "What should we buy at the market?\n\n"
+func (m *Model) initLists(width, height int) {
+	defaultList := list.New([]list.Item{}, list.NewDefaultDelegate(), width/3, height-3)
+	defaultList.SetShowHelp(false)
+	m.lists = []list.Model{defaultList, defaultList, defaultList}
 
-	for i, choice := range m.choices {
+	// init first list
+	m.lists[todo].Title = "To do"
+	m.lists[todo].SetItems([]list.Item{
+		Task{
+			status:      todo,
+			title:       "Do coffe",
+			description: "Make delicious coffee",
+		},
+		Task{
+			status:      todo,
+			title:       "Buy milk",
+			description: "Buy white milk 3.2% fat",
+		},
+		Task{
+			status:      todo,
+			title:       "Buy bread",
+			description: "White fresh bread",
+		},
+	})
 
-		// Is the cursor pointing at this choice?
-		cursor := " " // no cursor
-		if m.cursor == i {
-			cursor = ">" // cursor!
-		}
+	// init second list
+	m.lists[doing].Title = "In progress"
+	m.lists[doing].SetItems([]list.Item{
+		Task{
+			status:      doing,
+			title:       "Clean house",
+			description: "We will have a quest soon",
+		},
+		Task{
+			status:      doing,
+			title:       "feed dog",
+			description: "doggo woof woof",
+		},
+	})
 
-		checked := " "
-		if _, ok := m.selected[i]; ok {
-			checked = "x"
-		}
-
-		s += fmt.Sprintf(style.Render("%s [%s] %s\n", cursor, checked, choice))
-	}
-
-	s += "\nPress q to quit.\n"
-
-	return s
+	// init third list
+	m.lists[done].Title = "Done"
+	m.lists[done].SetItems([]list.Item{
+		Task{
+			status:      done,
+			title:       "feed rabbit",
+			description: "Bunny bunny",
+		},
+	})
 }
-
 func main() {
-
-	p := tea.NewProgram(initialModel())
+	p := tea.NewProgram(NewModel())
 	if _, err := p.Run(); err != nil {
-		fmt.Printf(style.Render("Alas, there's been an error: %v", err.Error()))
 		os.Exit(1)
 	}
-
 }
